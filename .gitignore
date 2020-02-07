@@ -1,3 +1,5 @@
+/.idea/
+
 # Executables
 rqlited
 **/rqlited
