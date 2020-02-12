@@ -9,18 +9,26 @@ import (
 	"encoding/json"
 	"errors"
 	"expvar"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hashicorp/raft"
 	"github.com/hashicorp/raft-boltdb"
+	"github.com/lni/dragonboat/v3"
+	"github.com/lni/dragonboat/v3/config"
+	"github.com/lni/dragonboat/v3/logger"
 	sql "github.com/rqlite/rqlite/db"
 )
 
@@ -130,7 +138,7 @@ type Store struct {
 	raft   *raft.Raft // The consensus mechanism.
 	ln     Listener
 	raftTn *raft.NetworkTransport
-	raftID string    // Node ID.
+	raftID uint64    // Node ID.
 	dbConf *DBConfig // SQLite database config.
 	dbPath string    // Path to underlying SQLite file, if not in-memory.
 	db     *sql.DB   // The underlying SQLite store.
@@ -140,7 +148,7 @@ type Store struct {
 	boltStore  *raftboltdb.BoltStore // Physical store.
 
 	metaMu sync.RWMutex
-	meta   map[string]map[string]string
+	meta   map[uint64]map[string]string
 
 	logger *log.Logger
 
@@ -151,6 +159,7 @@ type Store struct {
 	ElectionTimeout   time.Duration
 	ApplyTimeout      time.Duration
 	RaftLogLevel      string
+	config *StoreConfig
 }
 
 // StoreConfig represents the configuration of the underlying Store.
@@ -158,8 +167,10 @@ type StoreConfig struct {
 	DBConf *DBConfig   // The DBConfig object for this Store.
 	Dir    string      // The working directory for raft.
 	Tn     Transport   // The underlying Transport for raft.
-	ID     string      // Node ID.
+	ID     uint64      // Node ID.
 	Logger *log.Logger // The logger to use to log stuff.
+	Addr  string
+	Join bool
 }
 
 // New returns a new Store.
@@ -175,16 +186,69 @@ func New(ln Listener, c *StoreConfig) *Store {
 		raftID:       c.ID,
 		dbConf:       c.DBConf,
 		dbPath:       filepath.Join(c.Dir, sqliteFile),
-		meta:         make(map[string]map[string]string),
+		meta:         make(map[uint64]map[string]string),
 		logger:       logger,
 		ApplyTimeout: applyTimeout,
+		config: c,
 	}
+}
+
+var (
+	// initial nodes count is fixed to three, their addresses are also fixed
+	addresses = []string{
+		"localhost:63001",
+		"localhost:63002",
+	}
+)
+
+func (s *Store) initRaft(c *StoreConfig) (*dragonboat.NodeHost, error) {
+	nodeID := c.ID
+	addr := c.Addr
+	join := c.Join
+
+	initialMembers := make(map[uint64]string)
+	if !join {
+		for idx, v := range addresses {
+			initialMembers[uint64(idx+1)] = v
+		}
+	}
+	var nodeAddr = addr
+	fmt.Fprintf(os.Stdout, "node address: %s\n", nodeAddr)
+	logger.GetLogger("raft").SetLevel(logger.ERROR)
+	logger.GetLogger("rsm").SetLevel(logger.WARNING)
+	logger.GetLogger("transport").SetLevel(logger.WARNING)
+	logger.GetLogger("grpc").SetLevel(logger.WARNING)
+	rc := config.Config{
+		NodeID:             nodeID,
+		ClusterID:          1,
+		ElectionRTT:        10,
+		HeartbeatRTT:       1,
+		CheckQuorum:        true,
+		SnapshotEntries:    10,
+		CompactionOverhead: 5,
+	}
+	datadir := filepath.Join(c.Dir, fmt.Sprintf("node%d", nodeID))
+	nhc := config.NodeHostConfig{
+		WALDir:         c.Dir,
+		NodeHostDir:    c.Dir,
+		RTTMillisecond: 200,
+		RaftAddress:    nodeAddr,
+	}
+	nh, err := dragonboat.NewNodeHost(nhc)
+	if err != nil {
+		panic(err)
+	}
+	if err := nh.StartOnDiskCluster(initialMembers, join, NewSQL(s), rc); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to add cluster, %v\n", err)
+		os.Exit(1)
+	}
+	return nh, nil
 }
 
 // Open opens the store. If enableSingle is set, and there are no existing peers,
 // then this node becomes the first node, and therefore leader, of the cluster.
 func (s *Store) Open(enableSingle bool) error {
-	s.logger.Printf("opening store with node ID %s", s.raftID)
+	s.logger.Printf("opening store with node ID %d", s.raftID)
 
 	s.logger.Printf("ensuring directory at %s exists", s.raftDir)
 	if err := os.MkdirAll(s.raftDir, 0755); err != nil {
@@ -310,7 +374,7 @@ func (s *Store) Addr() string {
 }
 
 // ID returns the Raft ID of the store.
-func (s *Store) ID() string {
+func (s *Store) ID() uint64 {
 	return s.raftID
 }
 
@@ -580,7 +644,7 @@ func (s *Store) Query(qr *QueryRequest) ([]*sql.Rows, error) {
 
 // Join joins a node, identified by id and located at addr, to this store.
 // The node must be ready to respond to Raft communications at that address.
-func (s *Store) Join(id, addr string, voter bool, metadata map[string]string) error {
+func (s *Store) Join(id uint64, addr string, voter bool, metadata map[string]string) error {
 	s.logger.Printf("received request to join node at %s", addr)
 	if s.raft.State() != raft.Leader {
 		return ErrNotLeader
@@ -645,7 +709,7 @@ func (s *Store) Remove(id string) error {
 }
 
 // Metadata returns the value for a given key, for a given node ID.
-func (s *Store) Metadata(id, key string) string {
+func (s *Store) Metadata(id uint64, key string) string {
 	s.metaMu.RLock()
 	defer s.metaMu.RUnlock()
 
@@ -667,7 +731,7 @@ func (s *Store) SetMetadata(md map[string]string) error {
 
 // setMetadata adds the metadata md to any existing metadata for
 // the given node ID.
-func (s *Store) setMetadata(id string, md map[string]string) error {
+func (s *Store) setMetadata(id uint64, md map[string]string) error {
 	// Check local data first.
 	if func() bool {
 		s.metaMu.RLock()

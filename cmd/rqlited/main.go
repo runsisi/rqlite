@@ -54,7 +54,7 @@ var nodeEncrypt bool
 var nodeX509CACert string
 var nodeX509Cert string
 var nodeX509Key string
-var nodeID string
+var nodeID uint64
 var raftAddr string
 var raftAdv string
 var joinAddr string
@@ -77,13 +77,14 @@ var raftShutdownOnRemove bool
 var showVersion bool
 var cpuProfile string
 var memProfile string
+var join bool
 
 const name = `rqlited`
 const desc = `rqlite is a lightweight, distributed relational database, which uses SQLite as its
 storage engine. It provides an easy-to-use, fault-tolerant store for relational data.`
 
 func init() {
-	flag.StringVar(&nodeID, "node-id", "", "Unique name for node. If not set, set to hostname")
+	flag.Uint64Var(&nodeID, "node-id", 0, "Unique name for node. If not set, set to hostname")
 	flag.StringVar(&httpAddr, "http-addr", "localhost:4001", "HTTP server bind address. For HTTPS, set X.509 cert and key")
 	flag.StringVar(&httpAdv, "http-adv-addr", "", "Advertised HTTP address. If not set, same as HTTP server")
 	flag.StringVar(&x509CACert, "http-ca-cert", "", "Path to root X.509 certificate for HTTP endpoint")
@@ -121,6 +122,7 @@ func init() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [arguments] <data directory>\n", name)
 		flag.PrintDefaults()
 	}
+	flag.BoolVar(&join, "join", false, "Joining a new node")
 }
 
 func main() {
@@ -176,6 +178,7 @@ func main() {
 		DBConf: dbConf,
 		Dir:    dataPath,
 		ID:     idOrRaftAddr(),
+		Join: join,
 	})
 
 	// Set optional parameters on store.

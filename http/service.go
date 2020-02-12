@@ -235,25 +235,25 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.Path, "/db/execute"):
 		stats.Add(numExecutions, 1)
 		s.handleExecute(w, r)
-	case strings.HasPrefix(r.URL.Path, "/db/query"):
-		stats.Add(numQueries, 1)
-		s.handleQuery(w, r)
-	case strings.HasPrefix(r.URL.Path, "/db/backup"):
-		stats.Add(numBackups, 1)
-		s.handleBackup(w, r)
-	case strings.HasPrefix(r.URL.Path, "/db/load"):
-		stats.Add(numLoad, 1)
-		s.handleLoad(w, r)
-	case strings.HasPrefix(r.URL.Path, "/join"):
-		s.handleJoin(w, r)
-	case strings.HasPrefix(r.URL.Path, "/remove"):
-		s.handleRemove(w, r)
-	case strings.HasPrefix(r.URL.Path, "/status"):
-		s.handleStatus(w, r)
-	case r.URL.Path == "/debug/vars" && s.Expvar:
-		s.handleExpvar(w, r)
-	case strings.HasPrefix(r.URL.Path, "/debug/pprof") && s.Pprof:
-		s.handlePprof(w, r)
+	// case strings.HasPrefix(r.URL.Path, "/db/query"):
+	// 	stats.Add(numQueries, 1)
+	// 	s.handleQuery(w, r)
+	// case strings.HasPrefix(r.URL.Path, "/db/backup"):
+	// 	stats.Add(numBackups, 1)
+	// 	s.handleBackup(w, r)
+	// case strings.HasPrefix(r.URL.Path, "/db/load"):
+	// 	stats.Add(numLoad, 1)
+	// 	s.handleLoad(w, r)
+	// case strings.HasPrefix(r.URL.Path, "/join"):
+	// 	s.handleJoin(w, r)
+	// case strings.HasPrefix(r.URL.Path, "/remove"):
+	// 	s.handleRemove(w, r)
+	// case strings.HasPrefix(r.URL.Path, "/status"):
+	// 	s.handleStatus(w, r)
+	// case r.URL.Path == "/debug/vars" && s.Expvar:
+	// 	s.handleExpvar(w, r)
+	// case strings.HasPrefix(r.URL.Path, "/debug/pprof") && s.Pprof:
+	// 	s.handlePprof(w, r)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}

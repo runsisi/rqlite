@@ -30,7 +30,7 @@ func newCommand(t commandType, d interface{}) (*command, error) {
 	}, nil
 }
 
-func newMetadataSetCommand(id string, md map[string]string) (*command, error) {
+func newMetadataSetCommand(id uint64, md map[string]string) (*command, error) {
 	m := metadataSetSub{
 		RaftID: id,
 		Data:   md,
@@ -46,6 +46,6 @@ type databaseSub struct {
 }
 
 type metadataSetSub struct {
-	RaftID string            `json:"raft_id,omitempty"`
+	RaftID uint64            `json:"raft_id,omitempty"`
 	Data   map[string]string `json:"data,omitempty"`
 }
